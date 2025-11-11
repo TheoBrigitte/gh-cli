@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/MakeNowJust/heredoc"
+	"github.com/atotto/clipboard"
 	"github.com/cenkalti/backoff/v4"
 	"github.com/cli/cli/v2/api"
 	ghContext "github.com/cli/cli/v2/context"
@@ -69,6 +70,7 @@ type CreateOptions struct {
 	Projects        []string
 	Milestone       string
 	PushFirst       bool
+	CopyToClipboard bool
 
 	MaintainerCanModify bool
 	Template            string
@@ -86,7 +88,7 @@ type creationRefs interface {
 	QualifiedHeadRef() string
 	// UnqualifiedHeadRef returns a head ref in the form of the branch name only.
 	UnqualifiedHeadRef() string
-	//BaseRef returns the base branch name.
+	// BaseRef returns the base branch name.
 	BaseRef() string
 
 	// While the only thing really required from an api.Repository is the repository ID, changing that
@@ -349,6 +351,7 @@ func NewCmdCreate(f *cmdutil.Factory, runF func(*CreateOptions) error) *cobra.Co
 	fl.StringVar(&opts.RecoverFile, "recover", "", "Recover input from a failed run of create")
 	fl.StringVarP(&opts.Template, "template", "T", "", "Template `file` to use as starting body text")
 	fl.BoolVar(&opts.DryRun, "dry-run", false, "Print details instead of creating the PR. May still push git changes.")
+	fl.BoolVarP(&opts.CopyToClipboard, "clipboard", "c", false, "Copy the pull request URL to clipboard")
 
 	_ = cmdutil.RegisterBranchCompletionFlags(f.GitClient, cmd, "base", "head")
 
@@ -696,7 +699,7 @@ func NewCreateContext(opts *CreateOptions) (*CreateContext, error) {
 	// This closure provides an easy way to instantiate a CreateContext with everything other than
 	// the refs. This probably indicates that CreateContext could do with some rework, but the refactor
 	// to introduce PRRefs is already large enough.
-	var newCreateContext = func(refs creationRefs) *CreateContext {
+	newCreateContext := func(refs creationRefs) *CreateContext {
 		baseTrackingBranch := refs.BaseRef()
 
 		// The baseTrackingBranch is used later for a command like:
@@ -1023,7 +1026,18 @@ func submitPR(opts CreateOptions, ctx CreateContext, state shared.IssueMetadataS
 	pr, err := api.CreatePullRequest(client, ctx.PRRefs.BaseRepo(), params)
 	opts.IO.StopProgressIndicator()
 	if pr != nil {
-		fmt.Fprintln(opts.IO.Out, pr.URL)
+		if opts.CopyToClipboard {
+			// Copy the pull request to the clipboard (fallback to printing URL on error)
+			clipErr := clipboard.WriteAll(pr.URL)
+			if clipErr != nil {
+				fmt.Fprintln(opts.IO.ErrOut, "Failed to copy pull request URL to clipboard")
+				fmt.Fprintf(opts.IO.ErrOut, "  %s\n", clipErr)
+				fmt.Fprintln(opts.IO.Out, pr.URL)
+			}
+		} else {
+			// Print the pull request URL to stdout
+			fmt.Fprintln(opts.IO.Out, pr.URL)
+		}
 	}
 	if err != nil {
 		if pr != nil {
