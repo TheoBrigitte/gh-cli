@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/cli/cli/v2/api"
+	"github.com/cli/cli/v2/internal/config"
 	fd "github.com/cli/cli/v2/internal/featuredetection"
 	"github.com/cli/cli/v2/internal/gh"
 	"github.com/cli/cli/v2/internal/ghrepo"
@@ -311,6 +312,9 @@ func TestNewCmdEdit(t *testing.T) {
 
 			f := &cmdutil.Factory{
 				IOStreams: ios,
+				Config: func() (gh.Config, error) {
+					return config.NewBlankConfig(), nil
+				},
 			}
 
 			argv, err := shlex.Split(tt.input)
