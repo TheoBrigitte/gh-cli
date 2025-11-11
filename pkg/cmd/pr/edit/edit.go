@@ -21,8 +21,9 @@ import (
 )
 
 type EditOptions struct {
-	HttpClient func() (*http.Client, error)
-	IO         *iostreams.IOStreams
+	HttpClient       func() (*http.Client, error)
+	IO               *iostreams.IOStreams
+	TitledEditSurvey func(string, string) (string, string, error)
 
 	Finder          shared.PRFinder
 	Surveyor        Surveyor
@@ -31,6 +32,7 @@ type EditOptions struct {
 	Prompter        shared.EditPrompter
 	Detector        fd.Detector
 	BaseRepo        func() (ghrepo.Interface, error)
+	EditorMode      bool
 
 	SelectorArg string
 	Interactive bool
@@ -40,12 +42,13 @@ type EditOptions struct {
 
 func NewCmdEdit(f *cmdutil.Factory, runF func(*EditOptions) error) *cobra.Command {
 	opts := &EditOptions{
-		IO:              f.IOStreams,
-		HttpClient:      f.HttpClient,
-		Surveyor:        surveyor{P: f.Prompter},
-		Fetcher:         fetcher{},
-		EditorRetriever: editorRetriever{config: f.Config},
-		Prompter:        f.Prompter,
+		IO:               f.IOStreams,
+		HttpClient:       f.HttpClient,
+		Surveyor:         surveyor{P: f.Prompter},
+		Fetcher:          fetcher{},
+		EditorRetriever:  editorRetriever{config: f.Config},
+		Prompter:         f.Prompter,
+		TitledEditSurvey: shared.TitledEditSurvey(&shared.UserEditor{Config: f.Config, IO: f.IOStreams}),
 	}
 
 	var bodyFile string
@@ -171,6 +174,16 @@ func NewCmdEdit(f *cmdutil.Factory, runF func(*EditOptions) error) *cobra.Comman
 				opts.Interactive = true
 			}
 
+			var err error
+			opts.EditorMode, err = shared.InitEditorMode(f, opts.EditorMode, false, opts.IO.CanPrompt())
+			if err != nil {
+				return err
+			}
+
+			if opts.EditorMode {
+				opts.Interactive = false
+			}
+
 			if opts.Interactive && !opts.IO.CanPrompt() {
 				return cmdutil.FlagErrorf("--title, --body, --reviewer, --assignee, --label, --project, or --milestone required when not running interactively")
 			}
@@ -197,6 +210,7 @@ func NewCmdEdit(f *cmdutil.Factory, runF func(*EditOptions) error) *cobra.Comman
 	cmd.Flags().StringSliceVar(&opts.Editable.Projects.Remove, "remove-project", nil, "Remove the pull request from projects by `title`")
 	cmd.Flags().StringVarP(&opts.Editable.Milestone.Value, "milestone", "m", "", "Edit the milestone the pull request belongs to by `name`")
 	cmd.Flags().BoolVar(&removeMilestone, "remove-milestone", false, "Remove the milestone association from the pull request")
+	cmd.Flags().BoolVarP(&opts.EditorMode, "editor", "e", false, "Open the text editor to write the title and body in. The first line is the title and the remaining text is the body.")
 
 	_ = cmdutil.RegisterBranchCompletionFlags(f.GitClient, cmd, "base")
 
@@ -317,6 +331,19 @@ func editRun(opts *EditOptions) error {
 		if err != nil {
 			return err
 		}
+	}
+
+	if opts.EditorMode {
+		editable.Title.Value, editable.Body.Value, err = opts.TitledEditSurvey(editable.Title.Default, editable.Body.Default)
+		if err != nil {
+			return err
+		}
+		if editable.Title.Value == "" {
+			err = fmt.Errorf("title can't be blank")
+			return err
+		}
+		editable.Title.Edited = true
+		editable.Body.Edited = true
 	}
 
 	opts.IO.StartProgressIndicator()
